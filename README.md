@@ -2,7 +2,6 @@
 
 A fast, lightweight, **single-file** HTML5 Canvas whiteboard for freehand sketching, quick diagrams, brainstorming, and notes—with zero external dependencies or build steps.
 
-**Live Demo:** `https://shuvo-code-dev.github.io/Actor-Board/`
 ## Features
 
 - **Smooth Freehand Drawing:** Draw freely using a mouse, trackpad, or touch screen with responsive pointer support.
