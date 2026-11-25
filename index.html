@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Actor Board</title>
+  <!--
+    Project: Simple Whiteboard (Single-File Open Source Tool)
+    Author: Saiful Islam
+    License: MIT
+    Description: Lightweight, zero-dependency HTML5 Canvas whiteboard for freehand mouse/touch drawing and PNG export.
+  -->
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --border: #cbd5e1;
+      --accent: #0f766e;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      user-select: none;
+    }
+    .toolbar {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 14px;
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+      max-width: calc(100vw - 24px);
+    }
+    .tool-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .divider {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+    }
+    .swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      padding: 0;
+      transition: transform 0.12s ease;
+    }
+    .swatch:hover { transform: scale(1.1); }
+    .swatch.active {
+      border-color: var(--text);
+      box-shadow: 0 0 0 2px #fff inset;
+    }
+    input[type="color"] {
+      width: 26px;
+      height: 26px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      padding: 0;
+    }
+    label.size-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    input[type="range"] {
+      width: 78px;
+      cursor: pointer;
+    }
+    button.btn {
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 11px;
+      font-size: 0.84rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button.btn:hover { background: #f8fafc; }
+    button.btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    button.btn.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    button.btn.primary:hover { filter: brightness(0.95); }
+    canvas#board {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #ffffff;
+      cursor: crosshair;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar" role="toolbar" aria-label="Whiteboard Tools">
+    <div class="tool-group">
+      <button type="button" class="btn active" id="penBtn" onclick="setMode('pen')">Pen</button>
+      <button type="button" class="btn" id="eraserBtn" onclick="setMode('eraser')">Eraser</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="tool-group" id="swatches">
+      <button type="button" class="swatch active" style="background:#0f172a;" data-color="#0f172a" title="Black"></button>
+      <button type="button" class="swatch" style="background:#dc2626;" data-color="#dc2626" title="Red"></button>
+      <button type="button" class="swatch" style="background:#2563eb;" data-color="#2563eb" title="Blue"></button>
+      <button type="button" class="swatch" style="background:#16a34a;" data-color="#16a34a" title="Green"></button>
+      <button type="button" class="swatch" style="background:#d97706;" data-color="#d97706" title="Amber"></button>
+      <input type="color" id="customColor" value="#7c3aed" title="Custom Color" />
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="tool-group">
+      <label class="size-label">
+        Size <span id="sizeValue">4</span>px
+        <input type="range" id="brushSize" min="1" max="40" value="4" oninput="updateSize(this.value)" />
+      </label>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="tool-group">
+      <button type="button" class="btn" onclick="undo()" title="Undo (Ctrl+Z)">Undo</button>
+      <button type="button" class="btn" onclick="clearBoard()">Clear</button>
+      <button type="button" class="btn primary" onclick="downloadPNG()">Save PNG</button>
+    </div>
+  </div>
+
+  <canvas id="board"></canvas>
+
+  <script>
+    const canvas = document.getElementById("board");
+    const ctx = canvas.getContext("2d");
+
+    let mode = "pen";
+    let color = "#0f172a";
+    let size = 4;
+    let drawing = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    // Undo history stack (stores canvas data URLs)
+    const history = [];
+    const MAX_HISTORY = 25;
+
+    function fillWhiteBackground() {
+      ctx.save();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    function saveSnapshot() {
+      if (history.length >= MAX_HISTORY) history.shift();
+      history.push(canvas.toDataURL("image/png"));
+    }
+
+    function resizeCanvas(preserveContent = true) {
+      const prevData = preserveContent && canvas.width > 0 && canvas.height > 0
+        ? canvas.toDataURL("image/png")
+        : null;
+
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      fillWhiteBackground();
+
+      if (prevData) {
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0);
+        };
+        img.src = prevData;
+      } else {
+        saveSnapshot();
+      }
+    }
+
+    window.addEventListener("resize", () => resizeCanvas(true));
+
+    function setMode(newMode) {
+      mode = newMode;
+      document.getElementById("penBtn").classList.toggle("active", mode === "pen");
+      document.getElementById("eraserBtn").classList.toggle("active", mode === "eraser");
+      canvas.style.cursor = mode === "eraser" ? "cell" : "crosshair";
+    }
+
+    function setColor(newColor, activeSwatchEl = null) {
+      color = newColor;
+      if (mode === "eraser") setMode("pen");
+      document.querySelectorAll(".swatch").forEach(el => el.classList.remove("active"));
+      if (activeSwatchEl) activeSwatchEl.classList.add("active");
+    }
+
+    document.querySelectorAll(".swatch").forEach(btn => {
+      btn.addEventListener("click", () => setColor(btn.dataset.color, btn));
+    });
+
+    document.getElementById("customColor").addEventListener("input", e => {
+      setColor(e.target.value, null);
+    });
+
+    function updateSize(val) {
+      size = Number(val);
+      document.getElementById("sizeValue").textContent = size;
+    }
+
+    function getPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    }
+
+    canvas.addEventListener("pointerdown", e => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      drawing = true;
+      canvas.setPointerCapture(e.pointerId);
+      const pos = getPos(e);
+      lastX = pos.x;
+      lastY = pos.y;
+
+      // Draw a single dot on click
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = mode === "eraser" ? size * 3 : size;
+      ctx.strokeStyle = mode === "eraser" ? "#ffffff" : color;
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(lastX + 0.01, lastY + 0.01);
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    canvas.addEventListener("pointermove", e => {
+      if (!drawing) return;
+      const pos = getPos(e);
+
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = mode === "eraser" ? size * 3 : size;
+      ctx.strokeStyle = mode === "eraser" ? "#ffffff" : color;
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+      ctx.restore();
+
+      lastX = pos.x;
+      lastY = pos.y;
+    });
+
+    function stopDrawing(e) {
+      if (!drawing) return;
+      drawing = false;
+      if (e && canvas.hasPointerCapture(e.pointerId)) {
+        canvas.releasePointerCapture(e.pointerId);
+      }
+      saveSnapshot();
+    }
+
+    canvas.addEventListener("pointerup", stopDrawing);
+    canvas.addEventListener("pointercancel", stopDrawing);
+
+    function undo() {
+      if (history.length <= 1) return;
+      history.pop();
+      const prevUrl = history[history.length - 1];
+      const img = new Image();
+      img.onload = () => {
+        fillWhiteBackground();
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = prevUrl;
+    }
+
+    function clearBoard() {
+      fillWhiteBackground();
+      saveSnapshot();
+    }
+
+    function downloadPNG() {
+      const link = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      link.download = `whiteboard-${stamp}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    }
+
+    document.addEventListener("keydown", e => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undo();
+      }
+    });
+
+    // Initialize full-screen canvas
+    resizeCanvas(false);
+  </script>
+</body>
+</html>
